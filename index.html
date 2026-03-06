@@ -31,16 +31,42 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 
 // Expose to global scope so the rest of the app can use them
-window._fbAuth     = auth;
-window._fbDb       = db;
-window._fbDoc      = doc;
-window._fbGetDoc   = getDoc;
-window._fbSetDoc   = setDoc;
+window._fbAuth       = auth;
+window._fbDb         = db;
+window._fbDoc        = doc;
+window._fbGetDoc     = getDoc;
+window._fbSetDoc     = setDoc;
 window._fbOnSnapshot = onSnapshot;
-window._fbProvider = new GoogleAuthProvider();
-window._fbSignIn   = () => signInWithPopup(auth, window._fbProvider);
-window._fbSignOut  = () => signOut(auth);
-window._fbAuthReady = new Promise(resolve => onAuthStateChanged(auth, resolve));
+window._fbProvider   = new GoogleAuthProvider();
+window._fbSignIn     = () => signInWithPopup(auth, window._fbProvider);
+window._fbSignOut    = () => signOut(auth);
+window._fbAuthReady  = new Promise(resolve => onAuthStateChanged(auth, resolve));
+
+// Enable the sign-in button now that Firebase is loaded
+window._fbReady = true;
+const signInBtn  = document.getElementById('signInBtn');
+const signInText = document.getElementById('signInBtnText');
+if(signInBtn)  signInBtn.disabled = false;
+if(signInText) signInText.textContent = 'Continue with Google';
+
+// Global sign-in handler — safe to call from onclick
+window.handleSignIn = async function(btn){
+  if(!window._fbSignIn){ return; }
+  btn.disabled = true;
+  const textEl = document.getElementById('signInBtnText');
+  if(textEl) textEl.textContent = 'Signing in…';
+  try{
+    await window._fbSignIn();
+  } catch(e){
+    btn.disabled = false;
+    if(textEl) textEl.textContent = 'Continue with Google';
+    if(e.code !== 'auth/popup-closed-by-user'){
+      // show error in the login card instead of toast (toast may not exist yet)
+      const note = document.querySelector('.login-note');
+      if(note) note.textContent = 'Sign-in failed: ' + (e.message || e.code);
+    }
+  }
+};
 
 // Auth state listener — shows/hides login screen
 onAuthStateChanged(auth, user => {
@@ -294,6 +320,7 @@ td{padding:10px 14px;font-size:13px;vertical-align:middle}
   transition:all .15s;
 }
 .btn-google:hover{background:var(--hover);border-color:var(--ink3)}
+.btn-google:disabled{opacity:.6;cursor:not-allowed}
 .btn-google svg{width:20px;height:20px;flex-shrink:0}
 .login-note{font-size:11.5px;color:var(--ink3);margin-top:20px;line-height:1.6}
 
@@ -336,14 +363,14 @@ td{padding:10px 14px;font-size:13px;vertical-align:middle}
     <div class="login-logo">🏢</div>
     <div class="login-title">CorpTrack</div>
     <div class="login-sub">Your incorporation financial tracker.<br>Sign in to access your data from any device.</div>
-    <button class="btn-google" onclick="window._fbSignIn().catch(e=>toast(e.message,'warn'))">
+    <button class="btn-google" id="signInBtn" onclick="handleSignIn(this)" disabled>
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
         <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
         <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
         <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
         <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
       </svg>
-      Continue with Google
+      <span id="signInBtnText">Loading…</span>
     </button>
     <div class="login-note">Your data is stored securely in Firebase under your Google account.<br>No passwords, no setup — just sign in.</div>
   </div>
@@ -468,7 +495,7 @@ td{padding:10px 14px;font-size:13px;vertical-align:middle}
               <button class="btn btn-ghost btn-sm" onclick="showTab('clients', document.querySelectorAll('.tab')[3])" title="Manage clients" style="white-space:nowrap">＋ Manage</button>
             </div>
           </div>
-          <button class="btn btn-green" onclick="saveWeekEntry()" style="align-self:end">＋ Save Week</button>
+          <button class="btn btn-green" id="saveWeekBtn" onclick="saveWeekEntry()" style="align-self:end">＋ Save Week</button>
         </div>
       </div>
     </div>
@@ -488,6 +515,7 @@ td{padding:10px 14px;font-size:13px;vertical-align:middle}
             <option value="6">July</option><option value="7">August</option><option value="8">September</option>
             <option value="9">October</option><option value="10">November</option><option value="11">December</option>
           </select>
+          <button class="btn btn-ghost btn-sm" onclick="printEntries()">🖨 Print</button>
         </div>
       </div>
       <div class="tbl-wrap">
@@ -1165,8 +1193,41 @@ function updateWeekDates(){
   if(!ws) return;
   const mon = getMondayOf(ws);
   const fri = new Date(mon); fri.setDate(mon.getDate()+4);
+
+  // Auto-switch FY year to match the selected week's year
+  const weekYear = mon.getFullYear();
+  if(weekYear !== currentYear){
+    currentYear = weekYear;
+    document.getElementById('globalYear').value = weekYear;
+    document.getElementById('yearPill').textContent = 'FY '+weekYear;
+  }
+
   document.getElementById('weekRange').textContent = fmtDate(mon) + ' – ' + fmtDate(fri);
   buildDayGrid(mon);
+
+  // Check if an entry already exists for this week — if so load it
+  const monStr = isoDate(mon);
+  const yd = getYD(currentYear);
+  const existing = yd.entries.find(e => e.weekStart === monStr);
+  if(existing){
+    (existing.days || [0,0,0,0,0]).forEach((h,i)=>{
+      const inp = document.getElementById('day'+i);
+      if(inp && h > 0){
+        inp.value = h;
+        currentWeekHours[i] = h;
+        const s = getS();
+        document.getElementById('daytotal'+i).textContent = '$'+(h * s.hourlyRate).toFixed(2);
+      }
+    });
+    document.getElementById('entryComment').value = existing.comment || '';
+    const csel = document.getElementById('entryClientSelect');
+    if(csel) csel.value = existing.clientId || '';
+    updateWeekSummary();
+    document.getElementById('weekRange').textContent = fmtDate(mon) + ' – ' + fmtDate(fri) + '  ✏ Editing existing entry';
+    document.getElementById('saveWeekBtn').textContent = '✓ Update Week';
+  } else {
+    document.getElementById('saveWeekBtn').textContent = '＋ Save Week';
+  }
 }
 function buildDayGrid(monday){
   const grid = document.getElementById('dayGrid');
@@ -1245,6 +1306,7 @@ function saveWeekEntry(){
   // reset form
   document.getElementById('entryComment').value = '';
   document.getElementById('entryClientSelect').value = '';
+  document.getElementById('saveWeekBtn').textContent = '＋ Save Week';
   currentWeekHours = [0,0,0,0,0];
   DAYS.forEach((_,i)=>{ document.getElementById('day'+i).value=''; document.getElementById('daytotal'+i).textContent='$0.00'; });
   updateWeekSummary();
@@ -1631,9 +1693,84 @@ function printInvoice(){
   setTimeout(()=>{ w.focus(); w.print(); }, 600);
 }
 
-/* ════════════════════════════════════════════
-   CHARTS — pure Canvas, no libraries
-════════════════════════════════════════════ */
+function printEntries(){
+  const yd = getYD(currentYear);
+  const mf = document.getElementById('monthFilter').value;
+  let list = yd.entries;
+  if(mf !== '') list = list.filter(e => new Date(e.weekStart+'T00:00:00').getMonth() === parseInt(mf));
+  if(!list.length){ toast('No entries to print','warn'); return; }
+
+  const s = getS();
+  let totH=0, totNet=0, totGST=0, totInv=0, totTax=0;
+  const rows = list.map(e => {
+    const c = calcHours(e.totalHours);
+    totH+=e.totalHours; totNet+=c.net; totGST+=c.gst; totInv+=c.invoice; totTax+=c.corpTax;
+    const mon = new Date(e.weekStart+'T00:00:00');
+    const days = e.days || [0,0,0,0,0];
+    return `<tr>
+      <td>${fmtDate(mon)}</td>
+      ${days.map(d=>`<td style="text-align:center">${d>0?d+'h':'—'}</td>`).join('')}
+      <td style="text-align:right;font-weight:600">${fmtH(e.totalHours)}</td>
+      <td style="text-align:right">${fmt(c.net)}</td>
+      <td style="text-align:right">${fmt(c.gst)}</td>
+      <td style="text-align:right;font-weight:600">${fmt(c.invoice)}</td>
+      <td style="text-align:right">${fmt(c.corpTax)}</td>
+      <td>${e.comment||'—'}</td>
+      <td>${e.client||'—'}</td>
+    </tr>`;
+  }).join('');
+
+  const filterLabel = mf !== '' ? MONTHS[parseInt(mf)] : 'All Months';
+  const biz = getBiz();
+
+  const w = window.open('','_blank');
+  w.document.write(`<!DOCTYPE html><html><head><title>CorpTrack — FY${currentYear} Entries</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Helvetica Neue',Arial,sans-serif;color:#18181b;font-size:12px;padding:32px 40px}
+    h1{font-size:20px;font-weight:700;margin-bottom:2px}
+    .sub{color:#71717a;font-size:12px;margin-bottom:24px}
+    table{width:100%;border-collapse:collapse;margin-top:8px}
+    th{padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid #e4e4e7;background:#f9fafb;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    td{padding:7px 10px;border-bottom:1px solid #f3f4f6;font-size:11.5px;color:#374151}
+    tr:last-child td{border-bottom:none}
+    .total-row td{font-weight:700;color:#18181b;border-top:2px solid #d1d5db;padding-top:10px;background:#f9fafb;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .footer{margin-top:24px;padding-top:12px;border-top:1px solid #e4e4e7;display:flex;justify-content:space-between;font-size:11px;color:#a1a1aa}
+    @media print{@page{margin:12mm 14mm;size:A4 landscape}}
+  </style></head><body>
+  <h1>${biz.name || 'CorpTrack'} — Weekly Entries</h1>
+  <div class="sub">FY ${currentYear} · ${filterLabel} · Printed ${new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'})}</div>
+  <table>
+    <thead><tr>
+      <th>Week</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th>
+      <th style="text-align:right">Total Hrs</th>
+      <th style="text-align:right">Net Pay</th>
+      <th style="text-align:right">GST</th>
+      <th style="text-align:right">Invoice</th>
+      <th style="text-align:right">Corp Tax</th>
+      <th>Comment</th><th>Client</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr class="total-row">
+      <td colspan="6">Totals (${list.length} week${list.length!==1?'s':''})</td>
+      <td style="text-align:right">${fmtH(totH)}</td>
+      <td style="text-align:right">${fmt(totNet)}</td>
+      <td style="text-align:right">${fmt(totGST)}</td>
+      <td style="text-align:right">${fmt(totInv)}</td>
+      <td style="text-align:right">${fmt(totTax)}</td>
+      <td colspan="2"></td>
+    </tr></tfoot>
+  </table>
+  <div class="footer">
+    <span>CorpTrack · FY ${currentYear}</span>
+    <span>Hourly Rate: ${fmt(s.hourlyRate)}/hr · GST: ${s.gstRate}% · Corp Tax: ${s.corpTaxRate}%</span>
+  </div>
+  </body></html>`);
+  w.document.close();
+  setTimeout(()=>{ w.focus(); w.print(); }, 400);
+}
+
+
 const CHART_COLORS = ['#16a34a','#d97706','#dc2626','#2563eb','#7c3aed','#0891b2','#db2777','#65a30d','#ea580c'];
 
 function drawDonut(canvasId, legendId, segments){
